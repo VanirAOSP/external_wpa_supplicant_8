@@ -5267,7 +5267,8 @@ static int wpa_driver_nl80211_send_mntr(struct wpa_driver_nl80211_data *drv,
 
 	if (noack)
 		txflags |= IEEE80211_RADIOTAP_F_TX_NOACK;
-	*(le16 *) &rtap_hdr[12] = host_to_le16(txflags);
+	le16 leflags = host_to_le16(txflags);
+	memcpy(&rtap_hdr[12], &leflags, sizeof(le16)); // *(le16 *) &rtap_hdr[12] = host_to_le16(txflags);
 
 	res = sendmsg(drv->monitor_sock, &msg, 0);
 	if (res < 0) {
