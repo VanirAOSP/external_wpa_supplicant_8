@@ -33,9 +33,17 @@ ifeq ($(BOARD_WLAN_DEVICE), bcmdhd)
 L_CFLAGS += -DANDROID_P2P
 endif
 
+ifeq ($(BOARD_NO_APSME_ATTR),true)
+L_CFLAGS += -DNO_APSME_ATTR
+endif
+
 ifeq ($(BOARD_WLAN_DEVICE), qcwcn)
 L_CFLAGS += -DANDROID_QCOM_WCN
 L_CFLAGS += -DANDROID_P2P
+endif
+
+ifeq ($(BOARD_LEGACY_NL80211_STA_EVENTS),true)
+L_CFLAGS += -DLEGACY_STA_EVENTS
 endif
 
 # Use Android specific directory for control interface sockets
