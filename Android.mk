@@ -9,7 +9,8 @@ ifeq ($(WPA_SUPPLICANT_VERSION),VER_0_8_X)
 # end of each Android.mk, so that one Android.mk doesn't depend on variables
 # set up in the other Android.mk.
 include $(LOCAL_PATH)/hostapd/Android.mk \
-        $(LOCAL_PATH)/wpa_supplicant/Android.mk
+        $(LOCAL_PATH)/wpa_supplicant/Android.mk \
+        $(LOCAL_PATH)/private_lib/Android.mk
 endif
 ifeq ($(WPA_SUPPLICANT_VERSION),VER_2_1_DEVEL)
 include $(call all-subdir-makefiles)
