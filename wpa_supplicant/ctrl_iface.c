@@ -178,7 +178,7 @@ static int set_disallow_aps(struct wpa_supplicant *wpa_s, char *val)
 	struct wpa_ssid *c;
 
 	/*
-	 * disallow_list ::= <ssid_spec> | <bssid_spec> | <disallow_list> | “”
+	 * disallow_list ::= <ssid_spec> | <bssid_spec> | <disallow_list> | ÒÓ
 	 * SSID_SPEC ::= ssid <SSID_HEX>
 	 * BSSID_SPEC ::= bssid <BSSID_HEX>
 	 */
@@ -2872,45 +2872,6 @@ static int ctrl_iface_get_capability_auth_alg(int res, char *strict,
 	return pos - buf;
 }
 
-static int ctrl_iface_get_capability_modes(int res, char *strict,
-					      struct wpa_driver_capa *capa,
-					      char *buf, size_t buflen)
-{
-	int ret, first = 1;
-	char *pos, *end;
-	size_t len;
-
-	pos = buf;
-	end = pos + buflen;
-
-	if (res < 0) {
-		if (strict)
-			return 0;
-		len = os_strlcpy(buf, "IBSS AP", buflen);
-		if (len >= buflen)
-			return -1;
-		return len;
-	}
-
-	if (capa->flags & (WPA_DRIVER_FLAGS_IBSS)) {
-		ret = os_snprintf(pos, end - pos, "%sIBSS", first ? "" : " ");
-		if (ret < 0 || ret >= end - pos)
-			return pos - buf;
-		pos += ret;
-		first = 0;
-	}
-
-	if (capa->flags & (WPA_DRIVER_FLAGS_AP)) {
-		ret = os_snprintf(pos, end - pos, "%sAP",
-				  first ? "" : " ");
-		if (ret < 0 || ret >= end - pos)
-			return pos - buf;
-		pos += ret;
-		first = 0;
-	}
-
-	return pos - buf;
-}
 
 static int ctrl_iface_get_capability_modes(int res, char *strict,
 					   struct wpa_driver_capa *capa,
