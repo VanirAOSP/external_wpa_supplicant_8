@@ -2699,6 +2699,25 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 			sme_event_assoc_reject(wpa_s, data);
 		else {
 #ifdef ANDROID_P2P
+#if defined(LEGACY_STA_EVENTS)
+                /* If assoc reject is reported by the driver, then avoid
+                 * waiting for  the authentication timeout. Cancel the
+                 * authentication timeout and retry the assoc.
+                 */
+                if(wpa_s->assoc_retries++ < 5) {
+                        wpa_printf(MSG_ERROR, "Retrying assoc "
+                        "Iteration:%d", wpa_s->assoc_retries);
+                        wpa_supplicant_cancel_auth_timeout(wpa_s);
+
+                        /* Clear the states */
+                        wpa_sm_notify_disassoc(wpa_s->wpa);
+                        wpa_supplicant_deauthenticate(wpa_s, WLAN_REASON_DEAUTH_LEAVING);
+
+                        wpa_s->reassociate = 1;
+                        wpa_supplicant_req_scan(wpa_s, 1, 0);
+                } else
+                        wpa_s->assoc_retries = 0;
+#else
 			if(!wpa_s->current_ssid) {
 				wpa_printf(MSG_ERROR, "current_ssid == NULL");
 				break;
@@ -2737,6 +2756,7 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 				wpa_supplicant_disable_network(wpa_s, wpa_s->current_ssid);
 				wpas_p2p_group_remove(wpa_s, wpa_s->ifname);
 			}
+#endif
 #else
 			const u8 *bssid = data->assoc_reject.bssid;
 			if (bssid == NULL || is_zero_ether_addr(bssid))
