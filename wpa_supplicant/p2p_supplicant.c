@@ -3292,11 +3292,17 @@ int wpas_p2p_init(struct wpa_global *global, struct wpa_supplicant *wpa_s)
 	unsigned int r;
 	int i;
 
+wpa_printf(MSG_ERROR, "wpas_p2p_init() wpa_s->drv_flags[0x%x] & WPA_DRIVER_FLAGS_P2P_CAPABLE[0x%x] = [%d]",
+wpa_s->drv_flags, WPA_DRIVER_FLAGS_P2P_CAPABLE, (wpa_s->drv_flags & WPA_DRIVER_FLAGS_P2P_CAPABLE));
+
 	if (wpa_s->conf->p2p_disabled)
 		return 0;
 
-	if (!(wpa_s->drv_flags & WPA_DRIVER_FLAGS_P2P_CAPABLE))
-		return 0;
+	if (!(wpa_s->drv_flags & WPA_DRIVER_FLAGS_P2P_CAPABLE)) {
+		//return 0;
+		wpa_printf(MSG_ERROR, "wpas_p2p_init() Driver Flags Doesn't Have P2P Capability. wpa_s->drv_flags[0x%x] & WPA_DRIVER_FLAGS_P2P_CAPABLE[0x%x]", wpa_s->drv_flags, WPA_DRIVER_FLAGS_P2P_CAPABLE);
+		wpa_printf(MSG_ERROR, "wpas_p2p_init() SKIP!! p2p capability check");
+	}
 
 	if (global->p2p)
 		return 0;
