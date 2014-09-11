@@ -3309,6 +3309,13 @@ int wpas_p2p_add_p2pdev_interface(struct wpa_supplicant *wpa_s)
 }
 
 
+static int _wpas_p2p_in_progress(void *ctx)
+{
+	struct wpa_supplicant *wpa_s = ctx;
+	return wpas_p2p_in_progress(wpa_s);
+}
+
+
 /**
  * wpas_p2p_init - Initialize P2P module for %wpa_supplicant
  * @global: Pointer to global data from wpa_supplicant_init()
@@ -3380,6 +3387,7 @@ wpa_s->drv_flags, WPA_DRIVER_FLAGS_P2P_CAPABLE, (wpa_s->drv_flags & WPA_DRIVER_F
 	p2p.get_noa = wpas_get_noa;
 	p2p.go_connected = wpas_go_connected;
 	p2p.is_concurrent_session_active = wpas_is_concurrent_session_active;
+	p2p.is_p2p_in_progress = _wpas_p2p_in_progress;
 
 	os_memcpy(wpa_s->global->p2p_dev_addr, wpa_s->own_addr, ETH_ALEN);
 	os_memcpy(p2p.dev_addr, wpa_s->global->p2p_dev_addr, ETH_ALEN);
