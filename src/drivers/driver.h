@@ -1022,13 +1022,17 @@ struct wpa_driver_capa {
 #define WPA_DRIVER_FLAGS_IBSS				0x08000000
 /* Driver supports radar detection */
 #define WPA_DRIVER_FLAGS_RADAR				0x10000000
+/* Driver support ACS offload */
+#define WPA_DRIVER_FLAGS_ACS_OFFLOAD		0x0000000200000000ULL
 /* Driver supports a dedicated interface for P2P Device */
 #define WPA_DRIVER_FLAGS_DEDICATED_P2P_DEVICE		0x20000000
 /* Driver supports QoS Mapping */
 #define WPA_DRIVER_FLAGS_QOS_MAPPING			0x40000000
 /* Driver supports CSA in AP mode */
 #define WPA_DRIVER_FLAGS_AP_CSA				0x80000000
-	unsigned int flags;
+/* Driver supports mesh */
+#define WPA_DRIVER_FLAGS_MESH			0x0000000100000000ULL
+	u64 flags;
 
 	int max_scan_ssids;
 	int max_sched_scan_ssids;
@@ -1349,6 +1353,17 @@ struct macsec_init_params {
 	Boolean use_scb;
 };
 #endif /* CONFIG_MACSEC */
+
+struct drv_acs_params {
+	/* Selected mode (HOSTAPD_MODE_*) */
+	enum hostapd_hw_mode hw_mode;
+
+	/* Indicates whether HT is enabled */
+	int ht_enabled;
+
+	/* Indicates whether HT40 is enabled */
+	int ht40_enabled;
+};
 
 
 /**
@@ -3067,6 +3082,17 @@ struct wpa_driver_ops {
 	 * already established PMKSA.
 	 */
 	int (*key_mgmt_set_pmk)(void *priv, const u8 *pmk, size_t pmk_len);
+
+        /**
+	 * do_acs - Automatically select channel
+	 * @priv: Private driver interface data
+	 * @params: Parameters for ACS
+	 * Returns 0 on success, -1 on failure
+	 *
+	 * This command can be used to offload ACS to the driver if the driver
+	 * indicates support for such offloading (WPA_DRIVER_FLAGS_ACS_OFFLOAD).
+	 */
+	int (*do_acs)(void *priv, struct drv_acs_params *params);
 };
 
 
@@ -3555,7 +3581,15 @@ enum wpa_event_type {
 	 *  event might also be sent after the device handles a PTK rekeying
 	 *  operation.
 	 */
-	EVENT_AUTHORIZATION
+	EVENT_AUTHORIZATION,
+
+        /**
+	 * EVENT_ACS_CHANNEL_SELECTED - Received selected channels by ACS
+	 *
+	 * Indicates a pair of primary and secondary channels chosen by ACS
+	 * in device.
+	 */
+	EVENT_ACS_CHANNEL_SELECTED
 };
 
 
@@ -4214,6 +4248,16 @@ union wpa_event_data {
 		u8 *ptk_kck;
 		u8 *ptk_kek;
 	} authorization_info;
+
+        /**
+	 * struct acs_selected_channels - Data for EVENT_ACS_CHANNEL_SELECTED
+	 * @pri_channel: Selected primary channel
+	 * @sec_channel: Selected secondary channel
+	 */
+	struct acs_selected_channels {
+		u8 pri_channel;
+		u8 sec_channel;
+	} acs_selected_channels;
 };
 
 /**

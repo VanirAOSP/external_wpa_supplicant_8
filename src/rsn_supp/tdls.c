@@ -1438,8 +1438,8 @@ static int wpa_tdls_send_discovery_response(struct wpa_sm *sm,
 	hdr->len = (pos - (u8 *) hdr) - 2;
 	peer->rsnie_i_len = pos - peer->rsnie_i;
 
-	wpa_hexdump(MSG_DEBUG, "TDLS: RSN IE for Discovery Response",
-		    (u8 *) hdr, hdr->len + 2);
+    wpa_hexdump(MSG_DEBUG, "TDLS: RSN IE for Discovery Response",
+	            (u8 *) hdr, hdr->len + 2);
 skip_rsn_ies:
 	buf_len = 0;
 	if (wpa_tdls_get_privacy(sm)) {

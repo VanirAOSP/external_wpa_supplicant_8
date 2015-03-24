@@ -430,6 +430,10 @@ static int wpa_driver_nl80211_authenticate_retry(
 static int i802_set_freq(void *priv, struct hostapd_freq_params *freq);
 static int i802_set_iface_flags(struct i802_bss *bss, int up);
 
+static struct nl_msg * nl80211_drv_msg(struct wpa_driver_nl80211_data *drv,
+				int flags, uint8_t cmd);
+static struct nl_msg * nl80211_ifindex_msg(struct wpa_driver_nl80211_data *drv,
+			int ifindex, int flags, uint8_t cmd);
 
 static const char * nl80211_command_to_string(enum nl80211_commands cmd)
 {
@@ -2975,12 +2979,42 @@ static void qca_nl80211_avoid_freq(struct wpa_driver_nl80211_data *drv,
 }
 
 
+static void qca_nl80211_acs_select_ch(struct wpa_driver_nl80211_data *drv,
+				   const u8 *data, size_t len)
+{
+	struct nlattr *tb[QCA_WLAN_VENDOR_ATTR_ACS_MAX + 1];
+	union wpa_event_data event;
+
+	wpa_printf(MSG_DEBUG,
+		   "nl80211: ACS channel selection vendor event received");
+
+	if (nla_parse(tb, QCA_WLAN_VENDOR_ATTR_ACS_MAX,
+		      (struct nlattr *) data, len, NULL))
+		return;
+
+	if (!tb[QCA_WLAN_VENDOR_ATTR_ACS_PRIMARY_CHANNEL] ||
+	    !tb[QCA_WLAN_VENDOR_ATTR_ACS_SECONDARY_CHANNEL])
+		return;
+
+	os_memset(&event, 0, sizeof(event));
+	event.acs_selected_channels.pri_channel =
+		nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_ACS_PRIMARY_CHANNEL]);
+	event.acs_selected_channels.sec_channel =
+		nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_ACS_SECONDARY_CHANNEL]);
+
+	wpa_supplicant_event(drv->ctx, EVENT_ACS_CHANNEL_SELECTED, &event);
+}
+
+
 static void nl80211_vendor_event_qca(struct wpa_driver_nl80211_data *drv,
 				     u32 subcmd, u8 *data, size_t len)
 {
 	switch (subcmd) {
 	case QCA_NL80211_VENDOR_SUBCMD_AVOID_FREQUENCY:
 		qca_nl80211_avoid_freq(drv, data, len);
+		break;
+	case QCA_NL80211_VENDOR_SUBCMD_DO_ACS:
+		qca_nl80211_acs_select_ch(drv, data, len);
 		break;
 	default:
 		wpa_printf(MSG_DEBUG,
@@ -3609,6 +3643,9 @@ static void wiphy_info_supported_iftypes(struct wiphy_info_data *info,
 		case NL80211_IFTYPE_AP:
 			info->capa->flags |= WPA_DRIVER_FLAGS_AP;
 			break;
+		case NL80211_IFTYPE_MESH_POINT:
+			info->capa->flags |= WPA_DRIVER_FLAGS_MESH;
+			break;
 		case NL80211_IFTYPE_ADHOC:
 			info->capa->flags |= WPA_DRIVER_FLAGS_IBSS;
 			break;
@@ -4054,6 +4091,8 @@ static int wiphy_info_handler(struct nl_msg *msg, void *arg)
 				break;
 			case QCA_NL80211_VENDOR_SUBCMD_DFS_CAPABILITY:
 				drv->dfs_vendor_cmd_avail = 1;
+			case QCA_NL80211_VENDOR_SUBCMD_DO_ACS:
+				drv->capa.flags |= WPA_DRIVER_FLAGS_ACS_OFFLOAD;
 				break;
 			}
 
@@ -7913,6 +7952,7 @@ static int wpa_driver_nl80211_sta_add(void *priv,
 	nlmsg_free(msg);
 	return ret;
 }
+
 
 static void rtnl_neigh_delete_fdb_entry(struct i802_bss *bss, const u8 *addr)
 {
@@ -12712,6 +12752,7 @@ nla_put_failure:
 	return -ENOBUFS;
 }
 
+
 static int nl80211_key_mgmt_set_pmk(void *priv, const u8 *pmk,
 				    size_t pmk_len)
 {
@@ -12727,8 +12768,9 @@ static int nl80211_key_mgmt_set_pmk(void *priv, const u8 *pmk,
 	wpa_hexdump(MSG_DEBUG, "  * PMK", pmk, NL80211_KEY_LEN_PMK);
 
 	if (!(drv->capa.key_mgmt_offload_support &
-		  WPA_DRIVER_KEY_MGMT_OFFLOAD_SUPPORT_PMKSA))
+		  WPA_DRIVER_KEY_MGMT_OFFLOAD_SUPPORT_PMKSA)) {
 		return 0;
+	}
 
 	msg = nlmsg_alloc();
 	if (!msg)
@@ -12752,47 +12794,103 @@ nla_put_failure:
 	return -ENOBUFS;
 }
 
-static int nl80211_roaming(void *priv, int allowed, const u8 *bssid)
+
+static int hw_mode_to_qca_acs(enum hostapd_hw_mode hw_mode)
+{
+	switch (hw_mode) {
+	case HOSTAPD_MODE_IEEE80211B:
+		return QCA_ACS_MODE_IEEE80211B;
+	case HOSTAPD_MODE_IEEE80211G:
+		return QCA_ACS_MODE_IEEE80211G;
+	case HOSTAPD_MODE_IEEE80211A:
+		return QCA_ACS_MODE_IEEE80211A;
+	case HOSTAPD_MODE_IEEE80211AD:
+		return QCA_ACS_MODE_IEEE80211AD;
+	default:
+		return -1;
+	}
+}
+
+
+static int wpa_driver_do_acs(void *priv, struct drv_acs_params *params)
 {
 	struct i802_bss *bss = priv;
 	struct wpa_driver_nl80211_data *drv = bss->drv;
 	struct nl_msg *msg;
-	struct nlattr *params;
+	struct nlattr *data;
+	int ret = -ENOBUFS;
+	int mode;
 
-	wpa_printf(MSG_DEBUG, "nl80211: Roaming policy: allowed=%d", allowed);
-
-	if (!drv->roaming_vendor_cmd_avail) {
-		wpa_printf(MSG_DEBUG,
-			   "nl80211: Ignore roaming policy change since driver does not provide command for setting it");
+	mode = hw_mode_to_qca_acs(params->hw_mode);
+	if (mode < 0)
 		return -1;
-	}
 
 	msg = nlmsg_alloc();
 	if (!msg)
-		return -ENOMEM;
+		return -1;
 
 	nl80211_cmd(drv, msg, 0, NL80211_CMD_VENDOR);
 
 	NLA_PUT_U32(msg, NL80211_ATTR_IFINDEX, drv->ifindex);
 	NLA_PUT_U32(msg, NL80211_ATTR_VENDOR_ID, OUI_QCA);
 	NLA_PUT_U32(msg, NL80211_ATTR_VENDOR_SUBCMD,
-		    QCA_NL80211_VENDOR_SUBCMD_ROAMING);
+		    QCA_NL80211_VENDOR_SUBCMD_DO_ACS);
 
-	params = nla_nest_start(msg, NL80211_ATTR_VENDOR_DATA);
-	if (!params)
+	data = nla_nest_start(msg, NL80211_ATTR_VENDOR_DATA);
+	if (!data)
 		goto nla_put_failure;
-	NLA_PUT_U32(msg, QCA_WLAN_VENDOR_ATTR_ROAMING_POLICY,
-		    allowed ? QCA_ROAMING_ALLOWED_WITHIN_ESS :
-		    QCA_ROAMING_NOT_ALLOWED);
-	if (bssid)
-		NLA_PUT(msg, QCA_WLAN_VENDOR_ATTR_MAC_ADDR, ETH_ALEN, bssid);
-	nla_nest_end(msg, params);
+	NLA_PUT_U8(msg, QCA_WLAN_VENDOR_ATTR_ACS_HW_MODE, mode);
+	if (params->ht_enabled)
+		NLA_PUT_FLAG(msg, QCA_WLAN_VENDOR_ATTR_ACS_HT_ENABLED);
+	if (params->ht40_enabled)
+		NLA_PUT_FLAG(msg, QCA_WLAN_VENDOR_ATTR_ACS_HT40_ENABLED);
+	nla_nest_end(msg, data);
 
-	return send_and_recv_msgs(drv, msg, NULL, NULL);
+	ret = send_and_recv_msgs(drv, msg, NULL, NULL);
+	msg = NULL;
+	if (ret) {
+		wpa_printf(MSG_DEBUG,
+			   "nl80211: Failed to invoke driver ACS function: %s",
+			   strerror(errno));
+	}
 
- nla_put_failure:
+nla_put_failure:
 	nlmsg_free(msg);
-	return -1;
+	return ret;
+}
+
+
+static int nl80211_roaming(void *priv, int allowed, const u8 *bssid)
+{
+    struct i802_bss *bss = priv;
+    struct wpa_driver_nl80211_data *drv = bss->drv;
+    struct nl_msg *msg;
+    struct nlattr *params;
+
+    wpa_printf(MSG_DEBUG, "nl80211: Roaming policy: allowed=%d", allowed);
+
+    if (!drv->roaming_vendor_cmd_avail) {
+        wpa_printf(MSG_DEBUG,
+                     "nl80211: Ignore roaming policy change since driver does not provide command for setting it");
+        return -1;
+    }
+
+    if (!(msg = nl80211_drv_msg(drv, 0, NL80211_CMD_VENDOR)) ||
+        nla_put_u32(msg, NL80211_ATTR_VENDOR_ID, OUI_QCA) ||
+        nla_put_u32(msg, NL80211_ATTR_VENDOR_SUBCMD,
+                   QCA_NL80211_VENDOR_SUBCMD_ROAMING) ||
+        !(params = nla_nest_start(msg, NL80211_ATTR_VENDOR_DATA)) ||
+        nla_put_u32(msg, QCA_WLAN_VENDOR_ATTR_ROAMING_POLICY,
+                  allowed ? QCA_ROAMING_ALLOWED_WITHIN_ESS :
+                  QCA_ROAMING_NOT_ALLOWED) ||
+        (bssid &&
+        nla_put(msg, QCA_WLAN_VENDOR_ATTR_MAC_ADDR, ETH_ALEN, bssid))) {
+          nlmsg_free(msg);
+          return -1;
+    }
+    nla_nest_end(msg, params);
+
+    return send_and_recv_msgs(drv, msg, NULL, NULL);
 }
 
 
@@ -12833,6 +12931,33 @@ static int nl80211_set_mac_addr(void *priv, const u8 *addr)
 	}
 
 	return 0;
+}
+
+
+static struct nl_msg *
+nl80211_ifindex_msg(struct wpa_driver_nl80211_data *drv, int ifindex,
+		    int flags, uint8_t cmd)
+{
+	struct nl_msg *msg;
+
+	msg = nlmsg_alloc();
+	if (!msg)
+		return NULL;
+
+	if (!nl80211_cmd(drv, msg, flags, cmd) ||
+	    nla_put_u32(msg, NL80211_ATTR_IFINDEX, ifindex)) {
+		nlmsg_free(msg);
+		return NULL;
+	}
+
+	return msg;
+}
+
+
+static struct nl_msg * nl80211_drv_msg(struct wpa_driver_nl80211_data *drv, int flags,
+				uint8_t cmd)
+{
+	return nl80211_ifindex_msg(drv, drv->ifindex, flags, cmd);
 }
 
 
@@ -12928,6 +13053,7 @@ const struct wpa_driver_ops wpa_driver_nl80211_ops = {
 	.set_qos_map = nl80211_set_qos_map,
 	.set_wowlan = nl80211_set_wowlan,
 	.key_mgmt_set_pmk = nl80211_key_mgmt_set_pmk,
+	.do_acs = wpa_driver_do_acs,
 	.roaming = nl80211_roaming,
 	.set_mac_addr = nl80211_set_mac_addr,
 };

@@ -162,6 +162,9 @@ static Boolean wpa_qmi_read_card_status(int sim_num);
 #define EAP_SUB_TYPE_AKA_IDENTITY  0x05
 #define EAP_RESP_TYPE_NAK             3
 
+#define EAP_PROXY_APP_TYPE_SIM BIT(0)
+#define EAP_PROXY_APP_TYPE_AKA BIT(1)
+
 /* Call-back function to process QMI system events */
 void handle_qmi_sys_events(qmi_sys_event_type  eventId,
 const qmi_sys_event_info_type *eventInfo, void *userData)
@@ -478,8 +481,11 @@ static Boolean wpa_qmi_read_card_imsi(int sim_num)
 
 			/* Received IMSI is in the 3GPP format
 				converting it into ascii string */
-			imsi = os_malloc((2 * length));
-			os_memset(imsi, 0, (2 * length));
+			imsi = os_zalloc(2 * length);
+			if (imsi == NULL) {
+				wpa_printf(MSG_ERROR, "Couldn't allocate memmory for imsi");
+				return FALSE;
+			}
 			for (src = 1, dst = 0;
 				(src < length) && (dst < (length * 2));
 				src++) {
@@ -961,9 +967,13 @@ static void handle_qmi_eap_reply(
 	u8 *resp_data;
 	u32 length;
 
+	if (eap_proxy == NULL) {
+		wpa_printf(MSG_ERROR, "eap_proxy is NULL");
+		return;
+	}
 	if (QMI_STATE_RESP_PENDING == eap_proxy->qmi_state) {
-		if (NULL == eap_proxy || QMI_EAP_SERVICE != serviceId ||
-				QMI_EAP_SEND_EAP_PKT_RSP_ID != rspId) {
+		if (QMI_EAP_SERVICE != serviceId ||
+			QMI_EAP_SEND_EAP_PKT_RSP_ID != rspId) {
 			wpa_printf(MSG_ERROR, "Bad Param: serviceId=%d;"
 				 " rspId=%d\n", serviceId, rspId);
 			eap_proxy->qmi_state = QMI_STATE_RESP_TIME_OUT;
@@ -1735,7 +1745,7 @@ static Boolean eap_proxy_build_identity(struct eap_proxy_sm *eap_proxy, u8 id, s
 						/* IMSI RAW */
 						imsi_id_len = imsi_len_g + 1;
 				}
-			} else {
+			} else if (identity) {
 				/* idx is non-zero implies username available */
 				imsi_identity = identity;
 				imsi_id_len = config->identity_len;
@@ -1750,10 +1760,12 @@ static Boolean eap_proxy_build_identity(struct eap_proxy_sm *eap_proxy, u8 id, s
 				idx = imsi_len_g + 1;
 			}
 
-			/* mcc valus */
-			imsi_identity[idx + 16] = imsi[0];
-			imsi_identity[idx + 17] = imsi[1];
-			imsi_identity[idx + 18] = imsi[2];
+			if (imsi_identity != NULL) {
+				/* mcc valus */
+				imsi_identity[idx + 16] = imsi[0];
+				imsi_identity[idx + 17] = imsi[1];
+				imsi_identity[idx + 18] = imsi[2];
+			}
 
 			/* mnc valus */
 			mnc_len = card_mnc_len;
@@ -2053,6 +2065,61 @@ int eap_proxy_allowed_method (struct eap_peer_config *config, int vendor,
 			return 1;
 	}
 	return 0;
+}
+
+size_t eap_proxy_get_sim_info (char *reply_buf, int buf_len)
+{
+	char *pos, *end;
+	int i, ret;
+	int sim_app_type;
+
+	if (buf_len == 0)
+		return 0;
+
+	pos = reply_buf;
+	end = pos + buf_len;
+
+	ret = os_snprintf(pos, end - pos, "no_of_sims=%d", MAX_NO_OF_SIM_SUPPORTED);
+	if (ret < 0 || ret >= end - pos)
+		return ret;
+	pos += ret;
+
+	for (i = 0; i < MAX_NO_OF_SIM_SUPPORTED; i++)
+	{
+		if (wpa_qmi_read_card_status(i)) {
+			sim_app_type = 0;
+			if (wpa_uim[i].card_info[i].app_type == UIM_APP_TYPE_SIM_V01) {
+				wpa_printf(MSG_ERROR, "eap_proxy: sim%d type is 2G", i+1);
+				sim_app_type |= EAP_PROXY_APP_TYPE_SIM;
+			} else if (wpa_uim[i].card_info[i].app_type == UIM_APP_TYPE_USIM_V01) {
+				wpa_printf(MSG_ERROR, "eap_proxy: sim%d type is 3G", i+1);
+				sim_app_type |= EAP_PROXY_APP_TYPE_SIM;
+				sim_app_type |= EAP_PROXY_APP_TYPE_AKA;
+			} else {
+				wpa_printf(MSG_ERROR, "eap_proxy: Unknown SIM type!!!");
+				continue;
+			}
+
+			wpa_printf(MSG_ERROR, "eap_proxy: SIM %d is of type %d", i+1, sim_app_type);
+			ret = os_snprintf(pos, end - pos, " sim%d=%d", i+1, sim_app_type);
+			if (ret < 0 || ret >= end - pos)
+				break;
+
+			pos += ret;
+		} else {
+			sim_app_type = 0;
+			ret = os_snprintf(pos, end - pos, " sim%d=%d", i+1, sim_app_type);
+			if (ret < 0 || ret >= end - pos)
+				break;
+			pos += ret;
+		}
+	}
+
+	reply_buf[buf_len - 1] = '\0';
+	ret = pos - reply_buf;
+	wpa_printf(MSG_ERROR, "eap_proxy: reply_buf_len = %d", ret);
+	wpa_printf(MSG_ERROR, "eap_proxy: reply_buf = %s\n", reply_buf);
+	return ret;
 }
 
 #endif  /* CONFIG_EAP_PROXY */

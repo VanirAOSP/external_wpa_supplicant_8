@@ -722,6 +722,22 @@
  *	QoS mapping is relevant for IP packets, it is only valid during an
  *	association. This is cleared on disassociation and AP restart.
  *
+ * @NL80211_CMD_ADD_TX_TS: Ask the kernel to add a traffic stream for the given
+ *	%NL80211_ATTR_TSID and %NL80211_ATTR_MAC with %NL80211_ATTR_USER_PRIO
+ *	and %NL80211_ATTR_ADMITTED_TIME parameters.
+ *	Note that the action frame handshake with the AP shall be handled by
+ *	userspace via the normal management RX/TX framework, this only sets
+ *	up the TX TS in the driver/device.
+ *	If the admitted time attribute is not added then the request just checks
+ *	if a subsequent setup could be successful, the intent is to use this to
+ *	avoid setting up a session with the AP when local restrictions would
+ *	make that impossible. However, the subsequent "real" setup may still
+ *	fail even if the check was successful.
+ * @NL80211_CMD_DEL_TX_TS: Remove an existing TS with the %NL80211_ATTR_TSID
+ *	and %NL80211_ATTR_MAC parameters. It isn't necessary to call this
+ *	before removing a station entry entirely, or before disassociating
+ *	or similar, cleanup will happen in the driver/device in this case.
+ *
  * @NL80211_CMD_AUTHORIZATION_EVENT: Indicates that the device offloaded
  *	the establishment of temporal keys for an RSN connection.  This is
  *	used as part of key managment offload, where a device operating as a
@@ -741,22 +757,6 @@
  *	in NL80211_ATTR_PMK once it is known by the supplicant.  If connection
  *	is FT (802.11r) enabled with 802.1X, then the second 256 bits of the
  *	MSK is passed instead of the PMK.
- *
- * @NL80211_CMD_ADD_TX_TS: Ask the kernel to add a traffic stream for the given
- *	%NL80211_ATTR_TSID and %NL80211_ATTR_MAC with %NL80211_ATTR_USER_PRIO
- *	and %NL80211_ATTR_ADMITTED_TIME parameters.
- *	Note that the action frame handshake with the AP shall be handled by
- *	userspace via the normal management RX/TX framework, this only sets
- *	up the TX TS in the driver/device.
- *	If the admitted time attribute is not added then the request just checks
- *	if a subsequent setup could be successful, the intent is to use this to
- *	avoid setting up a session with the AP when local restrictions would
- *	make that impossible. However, the subsequent "real" setup may still
- *	fail even if the check was successful.
- * @NL80211_CMD_DEL_TX_TS: Remove an existing TS with the %NL80211_ATTR_TSID
- *	and %NL80211_ATTR_MAC parameters. It isn't necessary to call this
- *	before removing a station entry entirely, or before disassociating
- *	or similar, cleanup will happen in the driver/device in this case.
  *
  * @NL80211_CMD_MAX: highest used command number
  * @__NL80211_CMD_AFTER_LAST: internal use
@@ -929,11 +929,11 @@ enum nl80211_commands {
 
 	NL80211_CMD_SET_QOS_MAP,
 
-	NL80211_CMD_AUTHORIZATION_EVENT,
-	NL80211_CMD_KEY_MGMT_SET_PMK,
-
 	NL80211_CMD_ADD_TX_TS,
 	NL80211_CMD_DEL_TX_TS,
+
+    NL80211_CMD_AUTHORIZATION_EVENT,
+	NL80211_CMD_KEY_MGMT_SET_PMK,
 
 	/* add new commands above here */
 
@@ -1633,21 +1633,6 @@ enum nl80211_commands {
  *	creation then the new interface will be owned by the netlink socket
  *	that created it and will be destroyed when the socket is closed
  *
- * @NL80211_ATTR_AUTHORIZATION_STATUS: Status of key management offload.
- * @NL80211_ATTR_KEY_REPLAY_CTR: Key Replay Counter value last used in a
- *	valid EAPOL-Key frame.
- * @NL80211_ATTR_PSK: The Preshared Key to be used for the connection.
- * @NL80211_ATTR_OFFLOAD_KEY_MGMT: Requests that device handle establishment
- *	of temporal keys if possible.
- * @NL80211_ATTR_KEY_MGMT_OFFLOAD_SUPPORT: Supported types of device key
- *	management offload.
- * @NL80211_ATTR_KEY_DERIVE_OFFLOAD_SUPPORT: Supported types of device key
- *	derivation used as part of key management offload.
- * @NL80211_ATTR_PMK: The Pairwise Master Key to be used for the
- *	connection.
- * @NL80211_ATTR_PMK_LEN: The length of the PMK.
- * @NL80211_ATTR_PTK_KCK: Pairwise Transient Key, Key Confirmation Key.
- * @NL80211_ATTR_PTK_KEK: Pairwise Transient Key, Key Encryption Key.
  * @NL80211_ATTR_TDLS_INITIATOR: flag attribute indicating the current end is
  *	the TDLS link initiator.
  *
@@ -1675,6 +1660,22 @@ enum nl80211_commands {
  *
  * @NL80211_ATTR_SMPS_MODE: SMPS mode to use (ap mode). see
  *	&enum nl80211_smps_mode.
+ *
+ * @NL80211_ATTR_AUTHORIZATION_STATUS: Status of key management offload.
+ * @NL80211_ATTR_KEY_REPLAY_CTR: Key Replay Counter value last used in a
+ *	valid EAPOL-Key frame.
+ * @NL80211_ATTR_PSK: The Preshared Key to be used for the connection.
+ * @NL80211_ATTR_OFFLOAD_KEY_MGMT: Requests that device handle establishment
+ *	of temporal keys if possible.
+ * @NL80211_ATTR_KEY_MGMT_OFFLOAD_SUPPORT: Supported types of device key
+ *	management offload.
+ * @NL80211_ATTR_KEY_DERIVE_OFFLOAD_SUPPORT: Supported types of device key
+ *	derivation used as part of key management offload.
+ * @NL80211_ATTR_PMK: The Pairwise Master Key to be used for the
+ *	connection.
+ * @NL80211_ATTR_PMK_LEN: The length of the PMK.
+ * @NL80211_ATTR_PTK_KCK: Pairwise Transient Key, Key Confirmation Key.
+ * @NL80211_ATTR_PTK_KEK: Pairwise Transient Key, Key Encryption Key.
  *
  * @NL80211_ATTR_MAX: highest attribute number currently defined
  * @__NL80211_ATTR_AFTER_LAST: internal use
@@ -2011,17 +2012,6 @@ enum nl80211_attrs {
 
 	NL80211_ATTR_TDLS_PEER_CAPABILITY,
 
-	NL80211_ATTR_AUTHORIZATION_STATUS,
-	NL80211_ATTR_KEY_REPLAY_CTR,
-	NL80211_ATTR_PSK,
-	NL80211_ATTR_OFFLOAD_KEY_MGMT,
-	NL80211_ATTR_KEY_MGMT_OFFLOAD_SUPPORT,
-	NL80211_ATTR_KEY_DERIVE_OFFLOAD_SUPPORT,
-	NL80211_ATTR_PMK,
-	NL80211_ATTR_PMK_LEN,
-	NL80211_ATTR_PTK_KCK,
-	NL80211_ATTR_PTK_KEK,
-
 	NL80211_ATTR_IFACE_SOCKET_OWNER,
 
 	NL80211_ATTR_CSA_C_OFFSETS_TX,
@@ -2039,7 +2029,18 @@ enum nl80211_attrs {
 
 	NL80211_ATTR_SMPS_MODE,
 
-	/* add attributes here, update the policy in nl80211.c */
+	NL80211_ATTR_AUTHORIZATION_STATUS,
+	NL80211_ATTR_KEY_REPLAY_CTR,
+	NL80211_ATTR_PSK,
+	NL80211_ATTR_OFFLOAD_KEY_MGMT,
+	NL80211_ATTR_KEY_MGMT_OFFLOAD_SUPPORT,
+	NL80211_ATTR_KEY_DERIVE_OFFLOAD_SUPPORT,
+	NL80211_ATTR_PMK,
+	NL80211_ATTR_PMK_LEN,
+	NL80211_ATTR_PTK_KCK,
+	NL80211_ATTR_PTK_KEK,
+
+    /* add attributes here, update the policy in nl80211.c */
 
 	__NL80211_ATTR_AFTER_LAST,
 	NL80211_ATTR_MAX = __NL80211_ATTR_AFTER_LAST - 1
